@@ -825,6 +825,61 @@ static void DrawChineseChar(uint16_t unicode, uint8_t x, uint8_t y_pixel, uint8_
     }
 }
 
+
+/* Latin in 12px bands (channel names etc.): stretch the 5x7 small font
+   vertically so its ink is 10px tall, matching the 12px CJK glyphs.
+   Row map (target row -> source row, -1 = blank):
+   blank, 0, 1, 1, 2, 3, 4, 4, 5, 5, 6, blank
+   Source rows 0/3/6 (top bar / middle bar / bottom bar) are never
+   duplicated, so horizontal strokes stay 1px thick. */
+static const int8_t gLatin12RowMap[12] = {-1, 0, 1, 1, 2, 3, 4, 4, 5, 5, 6, -1};
+
+static void DrawLatin12FrameBuffer(uint8_t ch, uint8_t x, uint8_t y_top, bool inverse)
+{
+    if (ch < '!' || ch >= 127)
+        return;
+    const uint8_t *font_data = gFontSmall[ch - ' ' - 1];
+    for (uint8_t col = 0; col < 6; col++) {
+        if (x + col >= LCD_WIDTH)
+            break;
+        const uint8_t colbits = font_data[col];
+        for (uint8_t t = 0; t < 12; t++) {
+            const int8_t s = gLatin12RowMap[t];
+            if (s < 0 || !(colbits & (1u << s)))
+                continue;
+            const uint8_t y = (uint8_t)(y_top + t);
+            if (y < 8)
+                continue;
+            const uint8_t line = (uint8_t)((y - 8) / 8);
+            const uint8_t bit = (uint8_t)((y - 8) % 8);
+            if (line >= FRAME_LINES)
+                continue;
+            if (inverse)
+                gFrameBuffer[line][x + col] &= (uint8_t)~(1u << bit);
+            else
+                gFrameBuffer[line][x + col] |= (uint8_t)(1u << bit);
+        }
+    }
+}
+
+static void DrawLatin12PutPixel(uint8_t ch, uint8_t x, uint8_t y_top)
+{
+    if (ch < '!' || ch >= 127)
+        return;
+    const uint8_t *font_data = gFontSmall[ch - ' ' - 1];
+    for (uint8_t col = 0; col < 6; col++) {
+        if (x + col >= LCD_WIDTH)
+            break;
+        const uint8_t colbits = font_data[col];
+        for (uint8_t t = 0; t < 12; t++) {
+            const int8_t s = gLatin12RowMap[t];
+            if (s < 0 || !(colbits & (1u << s)))
+                continue;
+            PutPixel((uint8_t)(x + col), (uint8_t)(y_top + t), false);
+        }
+    }
+}
+
 size_t UI_SmallStringPixelWidth(const char *pString)
 {
     const uint8_t eng_char_width = 6;
@@ -884,6 +939,15 @@ void UI_PrintStringSmallAtPixel(const char *pString, uint8_t x_start, uint8_t x_
                 const unsigned max_off = (unsigned)(y_range - eng_char_height);
                 if (y_offset > max_off)
                     y_offset = max_off;
+            }
+            if (y_range >= 12u) {
+                uint8_t y_top = (uint8_t)(y_pixel_start + (uint8_t)((y_range - 12u) / 2u));
+                if (y_top < 8)
+                    y_top = 8;
+                DrawLatin12FrameBuffer((uint8_t)pString[i], x, y_top, false);
+                x += eng_char_width + 1;
+                i++;
+                continue;
             }
             uint8_t y_pixel = y_pixel_start + (uint8_t)y_offset;
             /* Mixed CJK + Latin: move Latin down to align baseline with Han */
@@ -992,6 +1056,15 @@ void UI_PrintStringSmallAtPixelInverse(const char *pString, uint8_t x_start, uin
                 if (y_offset > max_off)
                     y_offset = max_off;
             }
+            if (y_range >= 12u) {
+                uint8_t y_top = (uint8_t)(y_pixel_start + (uint8_t)((y_range - 12u) / 2u));
+                if (y_top < 8)
+                    y_top = 8;
+                DrawLatin12FrameBuffer((uint8_t)pString[i], x, y_top, true);
+                x += eng_char_width + 1;
+                i++;
+                continue;
+            }
             uint8_t y_pixel = y_pixel_start + (uint8_t)y_offset;
             if (has_chinese) {
                 if (y_pixel >= y_pixel_start + 4u)
@@ -1083,6 +1156,15 @@ static void UI_PrintStringSmallAtPixelCnInverseEx(const char *pString, uint8_t x
             const uint8_t eng_char_width = 6;
             const uint8_t eng_char_height = 7;
             const uint16_t y_range = (uint16_t)y_pixel_end - (uint16_t)y_pixel_start + 1u;
+            if (y_range >= 12u) {
+                uint8_t y_top = (uint8_t)(y_pixel_start + (uint8_t)((y_range - 12u) / 2u));
+                if (y_top < 8)
+                    y_top = 8;
+                DrawLatin12PutPixel((uint8_t)pString[i], x, y_top);
+                x += eng_char_width + 1;
+                i++;
+                continue;
+            }
             unsigned y_offset = 0;
             if (y_range >= eng_char_height)
                 y_offset = (unsigned)((y_range - eng_char_height) / 2u);
